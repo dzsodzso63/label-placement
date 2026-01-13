@@ -3,6 +3,7 @@ import { parseRoutes, type Route } from "./routes";
 export const LABEL_DIRECTIONS = ['bottom-right', 'bottom-left', 'top-left', 'top-right'] as const;
 export const LABEL_WIDTH = 100;
 export const LABEL_HEIGHT = 50;
+export const RESAMPLED_ROUTE_POINT_COUNT = 100;
 
 const WEIGHT_MINIMUM_DISTANCE = 2;
 const WEIGHT_SUM_DISTANCES = 0.05;
@@ -12,9 +13,84 @@ const WEIGHT_BEST_LABEL_DIRECTION = 100;
 const WEIGHT_OVERLAP_WITH_CREATED_LABELS = 10;
 const WEIGHT_DISTANCE_FROM_LABELS = 6;
 
+/**
+ * Performs uniform arc-length resampling on a route.
+ * @param route The original route to resample
+ * @param M The number of points in the resampled route (default: RESAMPLED_ROUTE_POINT_COUNT)
+ * @returns A new route with M points, preserving start and end points, with uniform arc-length spacing
+ */
+export function resampleRoute(route: Route, M: number = RESAMPLED_ROUTE_POINT_COUNT): Route {
+    if (route.length < 2) {
+        return route;
+    }
+
+    // Calculate cumulative arc lengths
+    const cumulativeLengths: number[] = [0];
+    let totalLength = 0;
+
+    for (let i = 1; i < route.length; i++) {
+        const [x1, y1] = route[i - 1];
+        const [x2, y2] = route[i];
+        const segmentLength = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+        totalLength += segmentLength;
+        cumulativeLengths.push(totalLength);
+    }
+
+    // If total length is 0 (all points are the same), return the original route
+    if (totalLength === 0) {
+        return route;
+    }
+
+    // Generate resampled points
+    const resampled: Route = [];
+
+    // Always include the first point
+    resampled.push([route[0][0], route[0][1]]);
+
+    // Generate M-2 intermediate points (M total points including start and end)
+    for (let i = 1; i < M - 1; i++) {
+        const targetLength = (i / (M - 1)) * totalLength;
+
+        // Find the segment containing this target length
+        let segmentIndex = 0;
+        for (let j = 0; j < cumulativeLengths.length - 1; j++) {
+            if (targetLength >= cumulativeLengths[j] && targetLength <= cumulativeLengths[j + 1]) {
+                segmentIndex = j;
+                break;
+            }
+        }
+
+        // Interpolate within the segment
+        const segmentStartLength = cumulativeLengths[segmentIndex];
+        const segmentEndLength = cumulativeLengths[segmentIndex + 1];
+        const segmentLength = segmentEndLength - segmentStartLength;
+
+        let t = 0;
+        if (segmentLength > 0) {
+            t = (targetLength - segmentStartLength) / segmentLength;
+        }
+
+        const [x1, y1] = route[segmentIndex];
+        const [x2, y2] = route[segmentIndex + 1];
+
+        resampled.push([
+            x1 + t * (x2 - x1),
+            y1 + t * (y2 - y1)
+        ]);
+    }
+
+    // Always include the last point
+    const lastPoint = route[route.length - 1];
+    resampled.push([lastPoint[0], lastPoint[1]]);
+
+    return resampled;
+}
+
 export function generateLabels(routesInput: string): string {
     const routes = parseRoutes(routesInput);
-    const rankedRoutes = rankRoutes(routes);
+    // Resample routes for uniform arc-length spacing
+    const resampledRoutes = routes.map(route => resampleRoute(route, RESAMPLED_ROUTE_POINT_COUNT));
+    const rankedRoutes = rankRoutes(resampledRoutes);
     console.log(rankedRoutes);
     const labels = rankedRoutes.map(route => {
         return {
